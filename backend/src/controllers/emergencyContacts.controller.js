@@ -8,7 +8,7 @@ import {
 export const addContact = async (req, res) => {
   try {
 
-    const { uuid } = req.params;
+    const { uuid } = req.user;
 
     const result = await addContactService(
       uuid,
@@ -30,7 +30,7 @@ export const addContact = async (req, res) => {
 export const getContacts = async (req, res) => {
   try {
 
-    const { uuid } = req.params;
+    const { uuid } = req.user;
 
     const contacts = await getContactsService(uuid);
 
@@ -49,7 +49,8 @@ export const getContacts = async (req, res) => {
 export const deleteContact = async (req, res) => {
   try {
 
-    const { uuid, contactId } = req.params;
+    const { uuid } = req.user;
+    const { contactId } = req.params;
 
     const result = await deleteContactService(
       uuid,

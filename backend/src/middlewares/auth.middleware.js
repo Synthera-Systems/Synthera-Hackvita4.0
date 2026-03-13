@@ -13,24 +13,24 @@ export const verifyAuthToken = async (req, res, next) => {
 
     const token = authHeader.split(" ")[1];
 
-    // const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await supabase.auth.getUser(token);
 
-    // if (error || !data.user) {
-    //   return res.status(401).json({
-    //     error: "Invalid token"
-    //   });
-    // }
+    if (error || !data.user) {
+      return res.status(401).json({
+        error: "Invalid token"
+      });
+    }
 
     // attach uuid to request
-    // req.user = {
-    //   uuid: data.user.id,
-    //   email: data.user.email
-    // };
-
     req.user = {
-      uuid: "f42ce390-cfda-47e0-bf3b-efdedb447f36",
-      email: "dhritiman.saikia.11b.244@gmail.com"
+      uuid: data.user.id,
+      email: data.user.email
     };
+
+    // req.user = {
+    //   uuid: "f42ce390-cfda-47e0-bf3b-efdedb447f36",
+    //   email: "dhritiman.saikia.11b.244@gmail.com"
+    // };
 
     next();
 
