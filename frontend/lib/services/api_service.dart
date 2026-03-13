@@ -163,4 +163,22 @@ class ApiService {
       return false;
     }
   }
+
+  // --- USER PROFILE API ---
+  static Future<Map<String, dynamic>?> getUserProfile() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/auth/me'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      print('Get profile error: $e');
+      return null;
+    }
+  }
 }
+
