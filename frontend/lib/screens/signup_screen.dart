@@ -1,6 +1,7 @@
 // lib/screens/signup_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../services/api_service.dart'; // IMPORTANT: Added this import!
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -19,6 +20,8 @@ class _SignupScreenState extends State<SignupScreen> {
 
   String? _selectedGender;
   String? _selectedBloodGroup;
+  
+  bool _isLoading = false; // Added loading state for the button
 
   final List<String> _genders = ['Male', 'Female', 'Other'];
   final List<String> _bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -34,11 +37,46 @@ class _SignupScreenState extends State<SignupScreen> {
     super.dispose();
   }
 
+  // --- ADDED THE API HANDLER HERE ---
+  Future<void> _handleSignup() async {
+    setState(() => _isLoading = true);
+
+    // Build the payload matching your backend expectations
+    final userData = {
+      "email": _emailController.text.trim(),
+      "password": _passwordController.text,
+      "name": _nameController.text.trim(),
+      "phone": _phoneController.text.trim(),
+      "age": int.tryParse(_ageController.text) ?? 0,
+      "gender": _selectedGender?.toLowerCase() ?? "other",
+      "blood_group": _selectedBloodGroup ?? "Unknown",
+      "identification_mark": _markController.text.trim()
+    };
+
+    final success = await ApiService.signup(userData);
+
+    if (!mounted) return;
+
+    setState(() => _isLoading = false);
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account Created! Please log in.'), backgroundColor: Colors.green),
+      );
+      // Kick them back to the login screen after successful signup
+      Navigator.pop(context); 
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to create account. Please try again.'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Defines the modern, rounded border for all input fields
     final _modernBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12.0), // Smooth, modern rounded corners
+      borderRadius: BorderRadius.circular(12.0),
       borderSide: const BorderSide(color: Colors.grey),
     );
 
@@ -94,7 +132,6 @@ class _SignupScreenState extends State<SignupScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Email (Verification button removed)
               TextField(
                 controller: _emailController,
                 decoration: InputDecoration(
@@ -105,7 +142,6 @@ class _SignupScreenState extends State<SignupScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Phone (Verification button removed)
               TextField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
@@ -128,7 +164,6 @@ class _SignupScreenState extends State<SignupScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Age and Gender Row
               Row(
                 children: [
                   Expanded(
@@ -184,20 +219,20 @@ class _SignupScreenState extends State<SignupScreen> {
               ),
               const SizedBox(height: 32),
 
+              // --- UPDATED BUTTON ---
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFD32F2F),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12), // Match the inputs
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: () {
-                  // Build JSON payload here later
-                  print("Create Account Tapped");
-                },
-                child: const Text('CREATE ACCOUNT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                onPressed: _isLoading ? null : _handleSignup, // Wires up the API call
+                child: _isLoading 
+                    ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                    : const Text('CREATE ACCOUNT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
               const SizedBox(height: 24),
             ],

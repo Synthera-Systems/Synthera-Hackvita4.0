@@ -78,6 +78,28 @@ class ApiService {
     }
   }
 
+  static Future<bool> signup(Map<String, dynamic> userData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(userData),
+      );
+
+      // 201 Created is standard for signup, but we check 200 just in case
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("Account created successfully!");
+        return true;
+      } else {
+        print("Signup failed: ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      print('Signup error: $e');
+      return false;
+    }
+  }
+
   // --- EMERGENCY CONTACTS APIS ---
   static Future<List<dynamic>> getContacts() async {
     try {
