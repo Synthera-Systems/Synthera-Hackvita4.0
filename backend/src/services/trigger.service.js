@@ -43,6 +43,8 @@ ${locationLink}
   const smsReport = await sendBulkSMS(phoneNumbers, message);
 
   return {
-    report: smsReport
+    report: smsReport,
+    battery,
+    time
   };
 };
