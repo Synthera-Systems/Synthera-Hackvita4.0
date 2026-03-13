@@ -1,11 +1,21 @@
 ---
-title: Safenet
-emoji: 🦀
-colorFrom: purple
-colorTo: red
+title: SafeNet
+emoji: 🚨
+colorFrom: red
+colorTo: blue
 sdk: docker
 pinned: false
-short_description: hackathon_project
 ---
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+# SafeNet
+
+Emergency alert backend API.
+
+This service provides:
+
+- Emergency trigger alerts
+- SMS notifications to emergency contacts
+- GPS location sharing
+- User authentication
+
+Base endpoint:
