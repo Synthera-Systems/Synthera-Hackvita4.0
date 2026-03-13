@@ -18,4 +18,3 @@ EXPOSE 7860
 
 # Start backend server
 CMD ["node", "src/index.js"]
-
