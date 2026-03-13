@@ -1,3 +1,4 @@
+import { access } from "fs";
 import { getUserData, logout, refreshToken, signin, signupAndRegister } from "../services/auth.service.js";
 
 export const signupController = async (req, res) => {
@@ -53,12 +54,17 @@ export const signinController = async (req, res) => {
 
 export const refreshTokenController = async (req, res) => {
   try {
-
-    const data = await refreshToken();
+    const { refresh_token } = req.body;
+    if (!refresh_token) {
+      return res.status(400).json({
+        error: "Refresh token is required"
+      });
+    }
+    const data = await refreshToken(refresh_token);
 
     res.json({
-      message: "Token refreshed",
-      session: data.session
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
     });
 
   } catch (error) {

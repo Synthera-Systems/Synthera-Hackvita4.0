@@ -49,14 +49,17 @@ export const getUserData = async (uuid) => {
 };
 
 // REFRESH TOKEN
-export const refreshToken = async () => {
+export const refreshToken = async (refresh_token) => {
 
-  const { data, error } =
-    await supabase.auth.refreshSession();
+  const { data, error } = await supabase.auth.refreshSession({
+    refresh_token: refresh_token
+  });
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(error.message);
+  }
 
-  return data;
+  return data.session;
 };
 
 
