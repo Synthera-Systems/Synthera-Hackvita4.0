@@ -67,8 +67,16 @@ class ApiService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
         final prefs = await SharedPreferences.getInstance();
+        
         await prefs.setString('access_token', data['access_token']);
         await prefs.setString('refresh_token', data['refresh_token']);
+        
+        // --- SAVE UUID FOR MESH IDENTITY ---
+        if (data['user'] != null && data['user']['uuid'] != null) {
+          await prefs.setString('user_uuid', data['user']['uuid']);
+          print("🆔 User UUID saved: ${data['user']['uuid']}");
+        }
+        
         return true;
       }
       return false;
@@ -101,15 +109,18 @@ class ApiService {
   }
 
   // --- EMERGENCY CONTACTS APIS ---
+// --- EMERGENCY CONTACTS APIS ---
   static Future<List<dynamic>> getContacts() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/emergency-contacts/'),
+        // REMOVED trailing slash to match your screenshot GET
+        Uri.parse('$baseUrl/emergency-contacts'), 
         headers: await _getHeaders(),
       );
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       }
+      print("Get Contacts Failed: ${response.statusCode}");
       return [];
     } catch (e) {
       print('Get contacts error: $e');
@@ -120,13 +131,59 @@ class ApiService {
   static Future<bool> addContact(String name, String phno) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/emergency-contacts/'),
+        // Ensure this matches the POST in your screenshot
+        Uri.parse('$baseUrl/emergency-contacts/'), 
         headers: await _getHeaders(),
         body: jsonEncode({'name': name, 'phno': phno}),
       );
+      print("Add Contact Response: ${response.statusCode} - ${response.body}");
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
       print('Add contact error: $e');
+      return false;
+    }
+  }
+
+  // --- SOS TRIGGER API ---
+  static Future<bool> triggerSOS(double lat, double lon, int battery) async {
+    try {
+      final url = Uri.parse('$baseUrl/trigger');
+      var headers = await _getHeaders();
+      
+      final body = jsonEncode({
+        'lat': lat,
+        'lon': lon,
+        'battery': battery,
+        'time': DateTime.now().toUtc().toIso8601String()
+      });
+
+      print("📡 Sending SOS to $url");
+      var response = await http.post(url, headers: headers, body: body);
+
+      // --- TOKEN EXPIRED LOGIC ---
+      if (response.statusCode == 401) {
+        print("🔑 Token expired. Attempting refresh...");
+        bool refreshed = await refreshAccessToken();
+        
+        if (refreshed) {
+          print("🔄 Token refreshed! Retrying SOS...");
+          headers = await _getHeaders(); // Get fresh headers with the new token
+          response = await http.post(url, headers: headers, body: body);
+        } else {
+          print("⛔ Refresh failed. User must log in again.");
+          return false;
+        }
+      }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("✅ SOS Success: ${response.body}");
+        return true;
+      } else {
+        print("❌ SOS Backend Error (${response.statusCode}): ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      print('SOS Trigger Network Error: $e');
       return false;
     }
   }
@@ -144,22 +201,36 @@ class ApiService {
     }
   }
 
-  // --- SOS TRIGGER API ---
-  static Future<bool> triggerSOS(double lat, double lon, int battery) async {
+
+// --- LIVE LOCATION STREAMING ---
+  static Future<bool> sendLiveLocation(double lat, double lon) async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('access_token');
+      if (token == null) return false;
+
+      // NOTE: You will need to create this endpoint on your Node.js backend!
+      // e.g., router.post('/sos/live-location', ...)
       final response = await http.post(
-        Uri.parse('$baseUrl/trigger'),
-        headers: await _getHeaders(),
+        Uri.parse('$baseUrl/sos/live-location'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
         body: jsonEncode({
           'lat': lat,
           'lon': lon,
-          'battery': battery,
-          'time': DateTime.now().toUtc().toIso8601String()
+          'timestamp': DateTime.now().toIso8601String(),
         }),
       );
-      return response.statusCode == 200 || response.statusCode == 201;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("📍 Live Location Ping Sent: $lat, $lon");
+        return true;
+      }
+      return false;
     } catch (e) {
-      print('SOS Trigger error: $e');
+      print("Live Location Error: $e");
       return false;
     }
   }
@@ -172,12 +243,49 @@ class ApiService {
         headers: await _getHeaders(),
       );
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        final data = jsonDecode(response.body);
+        
+        // Ensure UUID is cached for the Mesh Service
+        if (data['uuid'] != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('user_uuid', data['uuid']);
+        }
+        
+        return data;
       }
       return null;
     } catch (e) {
       print('Get profile error: $e');
       return null;
+    }
+  }
+
+  // --- OFFLINE MESH RELAY ---
+  static Future<bool> relayOfflineSOS(String victimUuid, double lat, double lon) async {
+    try {
+      // NOTE: Ensure this matches your teammate's backend route
+      final url = Uri.parse('$baseUrl/trigger/relay'); 
+      final headers = await _getHeaders();
+      
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: jsonEncode({
+          'victim_uuid': victimUuid,
+          'lat': lat,
+          'lon': lon,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("✅ Mesh Relay Success!");
+        return true;
+      }
+      print("❌ Mesh Relay Rejected: ${response.statusCode}");
+      return false;
+    } catch (e) {
+      print('Relay API Error: $e');
+      return false;
     }
   }
 }
