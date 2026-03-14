@@ -4,13 +4,15 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/sensor_engine.dart';
 import '../services/api_service.dart';
 import '../services/mesh_service.dart';
 import '../services/notification_service.dart';
+import '../services/sms_service.dart'; 
+import '../widgets/app_tour_overlay.dart'; 
 import '../routes.dart'; 
-import 'profile_screen.dart';
 import 'fake_call_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,27 +23,34 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // --- CORE SERVICES ---
   final SensorEngine _sensorEngine = SensorEngine();
   final MeshService _meshService = MeshService();
+  final SpeechToText _speechToText = SpeechToText();
   
+  // --- STATE VARIABLES ---
   Map<String, dynamic>? _userProfile;
   List<dynamic> _contacts = [];
   
   bool _isLoading = true;
   bool _isTriggering = false;
-
+  bool _isFirstTime = false;
+  bool _showOverlay = false;
+  
   Timer? _countdownTimer;
   int _secondsRemaining = 5;
-  bool _showOverlay = false;
-
   final TextEditingController _callerIdController = TextEditingController();
 
+  // =========================================================
+  // INIT & SETUP
+  // =========================================================
   @override
   void initState() {
     super.initState();
     _fetchDashboardData();
     _loadFakeCallerId(); 
     
+    // 1. Crash Sensor Setup
     _sensorEngine.onTriggerAlert = () {
       if (!_showOverlay && !_isTriggering) {
         _showCancelOverlay();
@@ -49,10 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
     };
     _sensorEngine.start();
     
+    // 2. Mesh Network Setup
     _meshService.onRelaySuccess = () {
       if (mounted){ 
         _showHeroModeDialog();
-        
         NotificationService.showNotification(
           id: 1, 
           title: '🚨 HERO MODE ACTIVATED', 
@@ -60,15 +69,10 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     };
-
     _meshService.initMesh(); 
-  }
 
-  Future<void> _loadFakeCallerId() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _callerIdController.text = prefs.getString('fake_caller_id') ?? 'Dad (Emergency)';
-    });
+    // 3. Start Invisible Voice Listener
+    _initSpeech();
   }
 
   @override
@@ -77,71 +81,75 @@ class _HomeScreenState extends State<HomeScreen> {
     _meshService.stopMesh(); 
     _countdownTimer?.cancel();
     _callerIdController.dispose();
+    _speechToText.stop();
     super.dispose();
   }
 
-  void _showCancelOverlay() {
-    setState(() {
-      _showOverlay = true;
-      _secondsRemaining = 5;
-    });
-
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_secondsRemaining > 0) {
-        setState(() => _secondsRemaining--);
-      } else {
-        timer.cancel();
-        if (_showOverlay) {
-          _handleSOS();
-          setState(() => _showOverlay = false);
+  // =========================================================
+  // INVISIBLE VOICE LISTENER LOGIC (FIXED SPAM & SOUND)
+  // =========================================================
+  void _initSpeech() async {
+    bool available = await _speechToText.initialize(
+      onStatus: (status) {
+        // HACKATHON FIX: Only restart if we are NOT in an emergency!
+        if ((status == 'done' || status == 'notListening') && !_showOverlay && !_isTriggering) {
+          // Add a 2-second delay to prevent Android from spamming the "Mic ON" beep
+          Future.delayed(const Duration(seconds: 2), () {
+            if (mounted && !_showOverlay && !_isTriggering) {
+              _startInvisibleListening();
+            }
+          });
         }
-      }
-    });
+      },
+      onError: (errorNotification) => print('🎤 Speech Error: $errorNotification'),
+    );
+
+    if (available) {
+      _startInvisibleListening();
+    }
   }
 
-  void _showHeroModeDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        backgroundColor: const Color(0xFF0D47A1), 
-        contentPadding: const EdgeInsets.all(24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.wifi_tethering, color: Colors.white, size: 64),
-            const SizedBox(height: 16),
-            const Text(
-              'HERO MODE ACTIVATED',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 1),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'You just acted as a Mesh Relay Node! An offline user nearby triggered an SOS, and your phone successfully caught it and forwarded it to the authorities via your internet connection.',
-              style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xFF0D47A1),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              onPressed: () => Navigator.pop(context),
-              child: const Text('DISMISS', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
+  void _startInvisibleListening() {
+    // Only turn on the mic if the app is chilling in a safe state
+    if (!_speechToText.isListening && !_showOverlay && !_isTriggering) {
+      _speechToText.listen(
+        onResult: (result) {
+          String words = result.recognizedWords.toLowerCase();
+          print("🎤 Heard: $words"); 
+
+          if (words.contains('help') || words.contains('emergency') || words.contains('sos')) {
+            _speechToText.stop(); // INSTANTLY KILL THE MIC
+            print("🚨 VOICE TRIGGER DETECTED! Firing SOS flow...");
+            
+            if (!_showOverlay && !_isTriggering) {
+              _showCancelOverlay(); 
+            }
+          }
+        },
+        listenFor: const Duration(seconds: 60), 
+        pauseFor: const Duration(seconds: 5),
+        cancelOnError: false,
+        partialResults: true, 
+      );
+    }
+  }
+
+  // =========================================================
+  // DATA FETCHING & FAKE CALL
+  // =========================================================
+  Future<void> _loadFakeCallerId() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _callerIdController.text = prefs.getString('fake_caller_id') ?? 'Dad (Emergency)';
+    });
   }
 
   Future<void> _fetchDashboardData() async {
     final prefs = await SharedPreferences.getInstance();
-
+    bool showTour = prefs.getBool('has_seen_tour') ?? false;
+      setState(() {
+        _isFirstTime = !showTour;
+      });
     final cachedProfile = prefs.getString('cached_profile');
     final cachedContacts = prefs.getString('cached_contacts');
 
@@ -185,9 +193,6 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         _isLoading = false;
       });
-      
-      print("☁️ Dashboard synced with cloud and cached locally.");
-
     } catch (e) {
       print("🔌 Offline mode or Error: Relying on cached dashboard data. Error: $e");
     } finally {
@@ -195,11 +200,133 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // --- FAKE CALL DIALOG ---
+  // =========================================================
+  // SOS TRIGGER FLOW (INTERNET -> MESH & SMS)
+  // =========================================================
+  void _showCancelOverlay() {
+    // 🛑 KILL THE MIC IMMEDIATELY ONCE TRIGGERED
+    _speechToText.stop();
+
+    setState(() {
+      _showOverlay = true;
+      _secondsRemaining = 5;
+    });
+
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_secondsRemaining > 0) {
+        setState(() => _secondsRemaining--);
+      } else {
+        timer.cancel();
+        if (_showOverlay) {
+          _handleSOS();
+          setState(() => _showOverlay = false);
+        }
+      }
+    });
+  }
+
+  Future<void> _handleSOS() async {
+    if (mounted) setState(() => _isTriggering = true);
+    try {
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      
+      print("Trying Layer 1 (Internet)...");
+      final internetSuccess = await ApiService.triggerSOS(position.latitude, position.longitude, 55);
+      
+      if (internetSuccess) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SOS DISPATCHED (INTERNET)!'), backgroundColor: Colors.red)
+        );
+
+        NotificationService.showNotification(
+          id: 2, 
+          title: '🆘 HELP IS ON THE WAY', 
+          body: 'Your live location and emergency alert have been successfully dispatched to your Safe Circle and the Authorities.',
+        );
+      } else {
+        print("Internet Failed. Falling back to Layer 2 (Mesh & SMS)...");
+        
+        final smsSuccess = await SmsService.sendSOSDirect(
+          contacts: _contacts,
+          lat: position.latitude,
+          lon: position.longitude,
+        );
+        
+        final meshSuccess = await _meshService.broadcastOfflineSOS(position.latitude, position.longitude, 55);
+        
+        if (!mounted) return;
+        
+        if (meshSuccess || smsSuccess) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('OFFLINE SOS: MESH OR SMS DISPATCHED!'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            )
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('SOS FAILED (NO SIGNAL OR PEERS)'),
+              backgroundColor: Colors.grey[800],
+            )
+          );
+        }
+      }
+    } catch (e) {
+      print("SOS Error: $e");
+    } finally {
+      if (mounted) setState(() => _isTriggering = false);
+    }
+  }
+
+  // =========================================================
+  // UI WIDGETS & DIALOGS
+  // =========================================================
+  void _showHeroModeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: const Color(0xFF0D47A1), 
+        contentPadding: const EdgeInsets.all(24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_tethering, color: Colors.white, size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              'HERO MODE ACTIVATED',
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 1),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'You just acted as a Mesh Relay Node! An offline user nearby triggered an SOS, and your phone successfully caught it and forwarded it to the authorities via your internet connection.',
+              style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF0D47A1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                minimumSize: const Size(double.infinity, 50),
+              ),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('DISMISS', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showFakeCallSetupDialog() {
     showDialog(
       context: context,
-      // FIX: Use dialogContext to avoid shadowing
       builder: (dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -228,19 +355,11 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.setString('fake_caller_id', _callerIdController.text);
-                
                 if (!mounted) return;
-                
-                // Pop the dialog first
                 Navigator.pop(dialogContext); 
-                
-                // PUSH IMMEDIATELY: The Black Screen Illusion starts now.
-                // Do NOT lock the phone physically. Just let it sit on the table.
                 Navigator.push(
                   context, 
-                  MaterialPageRoute(
-                    builder: (_) => FakeCallScreen(callerId: _callerIdController.text)
-                  )
+                  MaterialPageRoute(builder: (_) => FakeCallScreen(callerId: _callerIdController.text))
                 );
               },
               child: const Text("Start Simulation")
@@ -287,45 +406,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _handleSOS() async {
-    if (mounted) setState(() => _isTriggering = true);
-    try {
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      
-      print("Trying Layer 1 (Internet)...");
-      final internetSuccess = await ApiService.triggerSOS(position.latitude, position.longitude, 55);
-      
-      if (internetSuccess) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('SOS DISPATCHED (INTERNET)!'), backgroundColor: Colors.red)
-        );
-
-        // 2. FIRE THE SYSTEM NOTIFICATION WITH SOUND!
-        NotificationService.showNotification(
-          id: 2, 
-          title: '🆘 HELP IS ON THE WAY', 
-          body: 'Your live location and emergency alert have been successfully dispatched to your Safe Circle and the Authorities.',
-        );
-      } else {
-        print("Internet Failed. Falling back to Layer 2 (Mesh)...");
-        final meshSuccess = await _meshService.broadcastOfflineSOS(position.latitude, position.longitude, 55);
-        
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(meshSuccess ? 'SOS BROADCASTED TO MESH!' : 'SOS FAILED (NO INTERNET OR PEERS)'),
-            backgroundColor: meshSuccess ? Colors.orange : Colors.grey[800],
-          )
-        );
-      }
-    } catch (e) {
-      print("SOS Error: $e");
-    } finally {
-      if (mounted) setState(() => _isTriggering = false);
-    }
-  }
-
+  // =========================================================
+  // BUILD METHODS
+  // =========================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -334,7 +417,6 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Colors.white,
         centerTitle: true,
         title: GestureDetector(
-          // --- THE SECRET TRIGGER ---
           onLongPress: () {
             print("🕵️ Secret Trigger: Manual Hero Mode activated.");
             _meshService.simulateRelaySuccess();
@@ -396,6 +478,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         _countdownTimer?.cancel();
                         setState(() => _showOverlay = false);
                         print("❌ SOS Cancelled by user.");
+                        
+                        // THEY ARE SAFE: Turn the mic back on!
+                        _startInvisibleListening(); 
                       },
                       child: const Text("I AM SAFE (CANCEL)", 
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -403,6 +488,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
+            ),
+
+          if (_isFirstTime) 
+            AppTourOverlay(
+              onComplete: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('has_seen_tour', true);
+                setState(() => _isFirstTime = false);
+              },
             ),
         ],
       ),
@@ -419,7 +513,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return SafeArea(
       child: Column(
         children: [
-          // USER DETAILS CARD
           Container(
             width: double.infinity,
             margin: const EdgeInsets.all(16.0),
@@ -456,7 +549,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // EMERGENCY CONTACTS
           Flexible(
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -518,7 +610,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // SOS BUTTON
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 24.0),
             child: GestureDetector(

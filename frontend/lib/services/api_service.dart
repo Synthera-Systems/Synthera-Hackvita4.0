@@ -145,7 +145,7 @@ class ApiService {
   }
 
   // --- SOS TRIGGER API ---
-  static Future<bool> triggerSOS(double lat, double lon, int battery) async {
+static Future<bool> triggerSOS(double lat, double lon, int battery) async {
     try {
       final url = Uri.parse('$baseUrl/trigger');
       var headers = await _getHeaders();
@@ -157,17 +157,25 @@ class ApiService {
         'time': DateTime.now().toUtc().toIso8601String()
       });
 
-      print("📡 Sending SOS to $url");
+      // --- 💥 DEMO FLEX LOGS (OUTGOING) 💥 ---
+      print("\n==========================================");
+      print("🌐 API [LAYER 1]: DISPATCHING LIVE LOCATION");
+      print("📍 Endpoint: $url");
+      print("📦 Payload: $body");
+      print("==========================================");
+
       var response = await http.post(url, headers: headers, body: body);
 
       // --- TOKEN EXPIRED LOGIC ---
       if (response.statusCode == 401) {
-        print("🔑 Token expired. Attempting refresh...");
+        print("🔑 Token expired (401). Attempting refresh...");
         bool refreshed = await refreshAccessToken();
         
         if (refreshed) {
-          print("🔄 Token refreshed! Retrying SOS...");
+          print("🔄 Token refreshed! Retrying SOS dispatch...");
           headers = await _getHeaders(); // Get fresh headers with the new token
+          
+          print("📡 Re-Sending SOS to $url");
           response = await http.post(url, headers: headers, body: body);
         } else {
           print("⛔ Refresh failed. User must log in again.");
@@ -175,15 +183,23 @@ class ApiService {
         }
       }
 
+      // --- 💥 DEMO FLEX LOGS (INCOMING) 💥 ---
       if (response.statusCode == 200 || response.statusCode == 201) {
-        print("✅ SOS Success: ${response.body}");
+        print("✅ API [LAYER 1] SUCCESS! (Status: ${response.statusCode})");
+        print("📩 Server Response: ${response.body}");
+        print("==========================================\n");
         return true;
       } else {
-        print("❌ SOS Backend Error (${response.statusCode}): ${response.body}");
+        print("❌ API [LAYER 1] FAILED! (Status: ${response.statusCode})");
+        print("📩 Server Error: ${response.body}");
+        print("==========================================\n");
         return false;
       }
     } catch (e) {
-      print('SOS Trigger Network Error: $e');
+      print("\n==========================================");
+      print("🔥 API [LAYER 1] CRITICAL NETWORK ERROR");
+      print("Details: $e");
+      print("==========================================\n");
       return false;
     }
   }
