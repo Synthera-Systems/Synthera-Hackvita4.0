@@ -40,25 +40,9 @@ ${locationLink}
 `;
 
   // 6️⃣ Send SMS
-  // const smsReport = await sendBulkSMS(phoneNumbers, message);
+  const smsReport = await sendBulkSMS(phoneNumbers, message);
 
-  // return {
-  //   report: smsReport
-  // };
   return {
-    message: "Emergency triggered successfully",
-    details: {
-      user: {
-        name: user.name,
-        email: user.email
-      },
-      location: {
-        lat,
-        lon,
-        link: locationLink
-      },
-      battery,
-      time
-    }
+    report: smsReport
   };
 };

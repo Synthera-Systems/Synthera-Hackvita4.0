@@ -1,3 +1,4 @@
+import { updateLiveLocationService } from "../services/liveLocation.service.js";
 import { triggerEmergencyService } from "../services/trigger.service.js";
 
 export const triggerController = async (req, res) => {
@@ -19,6 +20,8 @@ export const triggerController = async (req, res) => {
       battery,
       time
     );
+
+    await updateLiveLocationService(uuid, lat, lon, time)
     
     res.status(200).json({
       message: "Emergency SMS sent",
