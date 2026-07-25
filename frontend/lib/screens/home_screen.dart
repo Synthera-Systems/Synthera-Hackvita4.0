@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:speech_to_text/speech_to_text.dart';
+import 'package:porcupine_flutter/porcupine_manager.dart';
+import 'package:porcupine_flutter/porcupine_error.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/sensor_engine.dart';
 import '../services/api_service.dart';
@@ -26,7 +27,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- CORE SERVICES ---
   final SensorEngine _sensorEngine = SensorEngine();
   final MeshService _meshService = MeshService();
-  final SpeechToText _speechToText = SpeechToText();
+  
+  // --- SILENT WAKE WORD ENGINE (PORCUPINE) ---
+  PorcupineManager? _porcupineManager;
+  final String _picovoiceAccessKey = "UyrI/efK4TBGr9vEigAHcavhCCbAi75LSzvb86e9eyd2vp7oww9wbA=="; // <-- 🛑 PASTE YOUR KEY HERE
+  final String _keywordAssetPath = "assets/wakewords/please-help-me.ppn"; // <-- 🛑 UPDATE YOUR EXACT PPN FILENAME HERE
   
   // --- STATE VARIABLES ---
   Map<String, dynamic>? _userProfile;
@@ -47,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    ApiService.getUserProfile().catchError((_) => null); // Silent server wake-up ping
     _fetchDashboardData();
     _loadFakeCallerId(); 
     
@@ -71,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
     };
     _meshService.initMesh(); 
 
-    // 3. Start Invisible Voice Listener
+    // 3. Start Silent Wake Word Listener
     _initSpeech();
   }
 
@@ -81,56 +87,39 @@ class _HomeScreenState extends State<HomeScreen> {
     _meshService.stopMesh(); 
     _countdownTimer?.cancel();
     _callerIdController.dispose();
-    _speechToText.stop();
+    
+    // Free up AI engine memory
+    _porcupineManager?.stop();
+    _porcupineManager?.delete();
+    
     super.dispose();
   }
 
   // =========================================================
-  // INVISIBLE VOICE LISTENER LOGIC (FIXED SPAM & SOUND)
+  // SILENT WAKE WORD LISTENER LOGIC (PORCUPINE)
   // =========================================================
   void _initSpeech() async {
-    bool available = await _speechToText.initialize(
-      onStatus: (status) {
-        // HACKATHON FIX: Only restart if we are NOT in an emergency!
-        if ((status == 'done' || status == 'notListening') && !_showOverlay && !_isTriggering) {
-          // Add a 2-second delay to prevent Android from spamming the "Mic ON" beep
-          Future.delayed(const Duration(seconds: 2), () {
-            if (mounted && !_showOverlay && !_isTriggering) {
-              _startInvisibleListening();
-            }
-          });
-        }
-      },
-      onError: (errorNotification) => print('🎤 Speech Error: $errorNotification'),
-    );
+    try {
+      _porcupineManager = await PorcupineManager.fromKeywordPaths(
+        _picovoiceAccessKey,
+        [_keywordAssetPath],
+        _wakeWordCallback, 
+      );
 
-    if (available) {
-      _startInvisibleListening();
+      await _porcupineManager?.start();
+      print("🦔 PORCUPINE: Custom Wake Word Engine Started! Listening silently...");
+    } on PorcupineException catch (err) {
+      print("❌ PORCUPINE ERROR: $err");
     }
   }
 
-  void _startInvisibleListening() {
-    // Only turn on the mic if the app is chilling in a safe state
-    if (!_speechToText.isListening && !_showOverlay && !_isTriggering) {
-      _speechToText.listen(
-        onResult: (result) {
-          String words = result.recognizedWords.toLowerCase();
-          print("🎤 Heard: $words"); 
-
-          if (words.contains('help') || words.contains('emergency') || words.contains('sos')) {
-            _speechToText.stop(); // INSTANTLY KILL THE MIC
-            print("🚨 VOICE TRIGGER DETECTED! Firing SOS flow...");
-            
-            if (!_showOverlay && !_isTriggering) {
-              _showCancelOverlay(); 
-            }
-          }
-        },
-        listenFor: const Duration(seconds: 60), 
-        pauseFor: const Duration(seconds: 5),
-        cancelOnError: false,
-        partialResults: true, 
-      );
+  // This fires instantly and silently the millisecond it hears your custom phrase!
+  void _wakeWordCallback(int keywordIndex) {
+    print("🚨 WAKE WORD DETECTED! Firing SOS flow...");
+    
+    // Trigger the SOS Overlay
+    if (!_showOverlay && !_isTriggering) {
+      _showCancelOverlay(); 
     }
   }
 
@@ -205,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // =========================================================
   void _showCancelOverlay() {
     // 🛑 KILL THE MIC IMMEDIATELY ONCE TRIGGERED
-    _speechToText.stop();
+    _porcupineManager?.stop();
 
     setState(() {
       _showOverlay = true;
@@ -247,17 +236,17 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         print("Internet Failed. Falling back to Layer 2 (Mesh & SMS)...");
         
-        final smsSuccess = await SmsService.sendSOSDirect(
-          contacts: _contacts,
-          lat: position.latitude,
-          lon: position.longitude,
-        );
+        // final smsSuccess = await SmsService.sendSOSDirect(
+        //   contacts: _contacts,
+        //   lat: position.latitude,
+        //   lon: position.longitude,
+        // );
         
         final meshSuccess = await _meshService.broadcastOfflineSOS(position.latitude, position.longitude, 55);
         
         if (!mounted) return;
         
-        if (meshSuccess || smsSuccess) {
+        if (meshSuccess ) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('OFFLINE SOS: MESH OR SMS DISPATCHED!'),
@@ -479,8 +468,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         setState(() => _showOverlay = false);
                         print("❌ SOS Cancelled by user.");
                         
-                        // THEY ARE SAFE: Turn the mic back on!
-                        _startInvisibleListening(); 
+                        // THEY ARE SAFE: Turn the silent mic back on!
+                        _porcupineManager?.start(); 
                       },
                       child: const Text("I AM SAFE (CANCEL)", 
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),

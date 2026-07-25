@@ -12,7 +12,7 @@ class SensorEngine {
   // DEMO THRESHOLDS: 
   // 20.0 = A sharp snap of the wrist.
   // 3.0 = Relative stillness (handheld but steady).
-  final double impactThreshold = 30.0; 
+  final double impactThreshold = 20.0; 
   final double inactivityThreshold = 3.0; 
   
   // Callback to tell the UI to show the 5s Cancel Timer

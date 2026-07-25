@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   sensors_plus: ^6.1.2
   shake: ^3.0.0
-  speech_to_text: ^7.3.0
+  porcupine_flutter: ^3.0.3
   geolocator: ^14.0.2
   nearby_connections: ^4.3.0
   flutter_background_service: ^5.1.0
@@ -74,6 +74,7 @@ flutter:
   assets:
     - assets/icons/
     - assets/audio/
+    - assets/wakewords/please-help-me.ppn
     - .env
   # To add assets to your application, add an assets section, like this:
   # assets:
